@@ -46,6 +46,11 @@
  *
  */
 use std::{thread, time};
+use std::time::{Duration, Instant};
+use std::io::{stdin, stdout, Read, Write};
+use rand::Rng;
+use rand::distributions::{Distribution, Uniform};
+
 
 // Test Grid dimensions
 const GRID_NR_ROWS: usize = 30;
@@ -59,6 +64,13 @@ const END_POINT: u32     = 3;
 const PATH_ELEMENT: u32  = 4;
 const PATH_HEAD: u32     = 5;
 const PATH_EXPLORED: u32 = 6;
+
+/* Control flags */
+/* Enable Random Maze  */
+/* If true set obstacles randomly */
+/* If false set horizontal barrier in the middle of the grid */
+const IS_SET_RANDOM_CHAOS_MAZE: u8 = 1;
+
 
 /* Create structure to store data for each grid point */
 #[derive(Copy, Clone)]
@@ -89,12 +101,16 @@ impl GridPoint {
 }
 
 /* Function assign symbols to grid point types to plot in terminal */
-fn create_gridpoint_string(point_id: u32) -> char {
+fn create_gridpoint_string(point_id: u32, dont_print_walls: u8) -> char {
     let mut return_char: char = ' ';
     if point_id == FREE_CELL {
         return_char = ' ';
     } else if point_id == BLOCKED_CELL {
-        return_char = '%';
+        if dont_print_walls == 1{
+            return_char = ' ';
+        } else{
+            return_char = '%';
+        }
     } else if point_id == START_POINT {
         return_char = '1';
     } else if point_id == END_POINT {
@@ -212,7 +228,7 @@ fn comp_heuristic_cost(coord_cell: (usize, usize), coord_end: (usize, usize)) ->
 }
 
 /* Print entire grid to terminal */
-fn print_grid(grid: &Vec<Vec<GridPoint>>){
+fn print_grid(grid: &Vec<Vec<GridPoint>>, dont_print_walls: u8){
     let mut line = String::from(""); 
     let _ii: u32;
     let _jj: u32;
@@ -221,7 +237,7 @@ fn print_grid(grid: &Vec<Vec<GridPoint>>){
     for _ii in 0..GRID_NR_ROWS{
         line = String::from(" "); 
         for _jj in 0..GRID_NR_COLS{
-            my_cell = create_gridpoint_string(grid[_ii][_jj].cell_type);
+            my_cell = create_gridpoint_string(grid[_ii][_jj].cell_type, dont_print_walls);
             line.push( my_cell );
         }
         line.push( ' ' );
@@ -229,10 +245,18 @@ fn print_grid(grid: &Vec<Vec<GridPoint>>){
     }
 }
 
+fn wait_for_confirmation() {
+    let mut stdout = stdout();
+    stdout.write(b"Press Enter to start the search ... ").unwrap();
+    stdout.flush().unwrap();
+    stdin().read(&mut [0]).unwrap();
+}
+
 fn main() {
 
     println!(" ---- A* Test ----- ");
 
+    let mut rng = rand::thread_rng();
     //-----------------------------------------------------------------------------
     /*
      * Create and setup environment 
@@ -240,22 +264,38 @@ fn main() {
     //-----------------------------------------------------------------------------
     let mut grid_environment: Vec<Vec<GridPoint>> = vec![vec![GridPoint::new(); GRID_NR_COLS]; GRID_NR_ROWS];
 
-
     /* Set Walls */
     grid_environment = set_boundary( grid_environment );
     /* Set Start Point */
-    let start_point: (usize, usize) = (27, 20);
+    let start_point: (usize, usize) = (27, 5);
     grid_environment = set_start_point(grid_environment,  start_point);
     /* Set cell flag: This is the start point */
     grid_environment[start_point.0][start_point.1].is_start = 1;
 
     /* Set End Point */
-    let end_point: (usize, usize) = (3, 3);
+    let end_point: (usize, usize) = (3, GRID_NR_COLS-6);
     grid_environment = set_end_point(grid_environment,  end_point);
 
     /* Set barriers */
-    for ii in 1..(GRID_NR_COLS-6){
-        grid_environment = set_barrier_point(grid_environment,  (16, ii));
+
+    if IS_SET_RANDOM_CHAOS_MAZE == 1 {
+        /* Loop over entire grid inside the walls  */
+        for ii in 1..(GRID_NR_ROWS-1){
+            for jj in 1..(GRID_NR_COLS-1){
+                /* Make sure not to transform start or end points to walls */
+                if (ii,jj) != start_point && (ii,jj) != end_point{
+                    let random_value = rng.gen_range(0..100);
+                    if random_value < 55 {
+                        grid_environment = set_barrier_point(grid_environment,  (ii, jj));
+                    }
+                }
+
+            }
+        }
+    } else {
+        for ii in 3..(GRID_NR_COLS-3){
+            grid_environment = set_barrier_point(grid_environment,  (16, ii));
+        }
     }
 
 
@@ -283,9 +323,18 @@ fn main() {
 
     let mut closed_set: Vec<GridPoint> = Vec::new();
 
+    println!(" Maze: ");
+    println!("  >> [1] Start Point ");
+    println!("  >> [2] End Point ");
+    println!("  >> [%] Obstacles ");
+    print_grid( &grid_environment ,0);
+    println!(" ");
+
+    wait_for_confirmation();
     // Loop as long as end is reached or end not reachable flag true
+    let start = Instant::now();
     while end_reached == 0 && end_not_reachable == 0 && debug_counter < debug_stop{
-        /* Clear Terminal */
+        /* Clear terminal */
         print!("{}[2J", 27 as char);
 
         if open_set.len() > 0 {
@@ -321,10 +370,23 @@ fn main() {
                 }
 
                 /* Plot Computed path */
-                for jj in 0..optimal_path.len(){
+                for jj in 1..optimal_path.len()-1{
                     let cm = optimal_path[jj].cell_coord;
                     grid_environment[cm.0][cm.1].cell_type = PATH_ELEMENT;
                 }
+
+                let duration: Duration = start.elapsed();
+
+                let duration_ms: u128 = duration.as_millis();
+
+                println!("");
+                println!("Time to find path: {:?} ms", duration_ms);
+                println!("");
+
+                println!("Itertation step #{:?}", debug_counter);
+                println!(" ");
+                print_grid( &grid_environment , 1);
+                println!(" ");
 
             } else {
                 /* Remove current grid point from open set  */
@@ -396,11 +458,11 @@ fn main() {
         }
 
         /* Plot Status */
-        println!("Itertation step #{:?}", debug_counter);
-        println!(" ");
-        print_grid( &grid_environment );
-        println!(" ");
-        thread::sleep(time::Duration::from_millis(10));
+        // println!("Itertation step #{:?}", debug_counter);
+        // println!(" ");
+        // print_grid( &grid_environment );
+        // println!(" ");
+        //thread::sleep(time::Duration::from_millis(10));
 
         /* Update debug counter */
         debug_counter = debug_counter + 1 ;
